@@ -1,4 +1,5 @@
-import type Backend from '../backend'
+import type { Backend } from '../backend/types/backend/backend'
+import type { BackendHost } from '../backend/types/backend-host/backend-host'
 import Limits from '../limits'
 import Argv from './argv'
 import { FAILED_RUN } from './failed-run'
@@ -21,8 +22,8 @@ import type Types from './types'
  * @returns the backend, or null outside a git working tree
  */
 export async function gitBackendOf(
-  host: Backend.BackendHost,
-): Promise<Backend.Backend | null> {
+  host: BackendHost,
+): Promise<Backend | null> {
   const runOf =
     (pinned: Types.Repository | null): Types.GitRun =>
     async argv => {
@@ -49,6 +50,7 @@ export async function gitBackendOf(
   const run = runOf(repository)
 
   let baseline: Promise<ReadonlySet<string> | null> | null = null
+  const cutBases = new Set<string>()
 
   const depsOf = (dirty: ReadonlySet<string> | null): Types.GitDeps => ({
     run,
@@ -57,6 +59,7 @@ export async function gitBackendOf(
     entryKindsOf: host.entryKindsOf,
     sessionStartMs: host.sessionStartMsOf(),
     baseline: dirty,
+    cutBases,
     onBranchBase: host.onBranchBase,
   })
 

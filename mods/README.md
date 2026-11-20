@@ -2,20 +2,23 @@
 
 A mod is a Claude Code plugin whose behaviour lives in a hooks module: one
 `register(on, options)` entry that hooks the engine's events as functions
-`($, e, next)`. These four ship inside Claude Code; this folder is their
+`($, e, next)`. These seven ship inside Claude Code; this folder is their
 source, published as it is built into the binary.
 
 | Mod | What it does | Seated |
 | --- | --- | --- |
-| [`sec-default`](sec-default) | Keeps an organization's classic hooks, prompt content, managed settings, tool policy, permission rules and pinned environment out of reach of the plugins a person installs; adds no policy of its own. | Outermost, on a machine with managed settings or a managed-mcp.json, or for a Team or Enterprise organization, and from then on for the session, unless managed `prependPlugins` says otherwise |
+| [`sec-default`](sec-default) | Keeps an organization's classic hooks, prompt content, managed settings, tool policy, permission rules and pinned environment out of reach of the plugins a person installs, and keeps those plugins from running the model's call before it is allowed. | Outermost, on a machine with managed settings or a managed-mcp.json, for a Team or Enterprise organization, or wherever the HIPAA mod is on (right behind it), and from then on for the session, unless managed `prependPlugins` says otherwise |
 | [`diff`](diff) | `/diff`: the session's uncommitted changes in a pane beside the transcript, file by file with their hunks, refreshed as Claude edits files and runs commands. | Built in |
 | [`telemetry`](telemetry) | Hooks `$.telemetry`'s two events (`log`, `mark`), adding the noun in the `engine.create` fold where the engine has none, so a built-in plugin can record an event as a first-party analytics row, sent in batches; refuses installed plugins; sends nothing wherever Claude Code's analytics are off. | Built in |
 | [`agents-md`](agents-md) | `AGENTS.md` as project instructions, by one option: loaded where the project has no `CLAUDE.md` of its own (`claude-md-or-agents-md`, the default) or beside it (`claude-md-and-agents-md`), placed and framed exactly as the engine places `CLAUDE.md`, nested ones on a `Read`; or the project's and the person's instruction files dropped and the organization's kept (`managed-only`); or `CLAUDE.md` alone, as the engine reads it (`claude-md`). | Built in |
+| [`privacy`](privacy) | Refuses a shell, file, web fetch or MCP call that holds the signed-in account's email address beside a word that declares who is calling, with no prompt, so the address does not go out as a client's identity; refuses a `user`-tier plugin's own `$.session.identity()`. | Built in |
+| [`hipaa-default`](hipaa-default) | Refuses a plugin's or a settings hook's own call to an MCP or connector tool that an administrator blocked, or to any tool, file or process where a managed deny rule covers the call, with no prompt, unless it is the organization's. | First of all, for an organization under HIPAA, unless managed `enabledPlugins` turns it off |
+| [`easel`](easel) | Draws charts in the transcript: a chart tool for Claude, and automatic charts under MCP results that are metrics over time. | Built in |
 
 Each folder is a complete plugin: `.claude-plugin/plugin.json`, a
 `hooks/hooks.json` naming the module, and TypeScript under `hooks/` typed
-against the declarations `/plugin-types` writes (`import type … from
-'claude-code'`), kept here in `types/`. To read one running from source:
+against the plugin API's declarations (`import type … from 'claude-code'`),
+kept here in `types/`. To read one running from source:
 
     claude --plugin-dir mods/diff
 
@@ -29,7 +32,7 @@ A test gets the engine's own `$` and a plugin's `on`. Each call on `$` is one
 the engine makes, through every hook of the mod loaded as it ships. The hooks
 the test registers with `on` sit beneath the mod, where the rest of the world
 would be, and nothing is beneath them: a call they leave unanswered throws,
-naming its event.
+naming its event. `ui.render` answers, with the node Claude Code draws.
 
 A test file is named for what it covers under `hooks/` (`register.test.ts`
 beside `hooks/register.ts`, `git.test.ts` beside `hooks/git/`), and holds its
@@ -48,7 +51,13 @@ describe('register', () => {
     on('session.start', ($, e) => ({ cwd: e.cwd }))
     on('command.register', ($, e) => ({ value: { command: e.name } }))
     on('process.run', () => ({
-      value: { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' },
+      value: {
+        exitCode: 128,
+        stdout: '',
+        stderr: 'fatal: not a git repository',
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+      },
     }))
     on('ui.open', ($, e, next) => {
       opened.push(e.id)
@@ -60,6 +69,7 @@ describe('register', () => {
       command: 'diff',
       args: '',
       origin: { kind: 'composer' },
+      presentation: { isFullscreen: true, columns: 160 },
     })
 
     expect(text).toContain("isn't in a git repository")
@@ -78,8 +88,20 @@ unawaited, `await clock.settle()`, then look: the clock stays where it was.
 `$.ui.press({ plugin, key })` presses a `Button` the test rendered, as a
 click in the terminal does.
 
-`tsc -p mods/tsconfig.json` typechecks every mod's hooks and tests against
-`types/` and each mod's own `types/` contract.
+`scripts/ci/typecheck-mods.sh` typechecks every mod's hooks and tests against
+`types/` and each mod's own `types/` contract, on every pull request that
+changes the CLI.
+
+`types/claude-code.d.ts` is generated, the same text byte for byte as the
+declarations embedded in the engine. Don't edit it: change the type under
+`src/plugins/functionHooks/types/`, or the shader language in
+`src/plugins/functionHooks/shader-language/shader.d.ts.txt`, and run
+
+    bun scripts/generate-plugin-dts.ts
+
+A required test fails while it is stale, and names that command. The copy holds
+no tool table, whose held-back names can't be published, so a tool's input is
+untyped here and a hook that reads, say, a Read's `file_path` narrows it.
 
 ## Composing mods: noun contracts
 
@@ -90,7 +112,8 @@ for the noun, and declares the noun on `EngineInterface` in `claude-code`
 (`telemetry/types/index.d.ts` exports `Telemetry`, `TelemetryLogEntry`,
 `TelemetryMarkEntry` and the rest, and declares `$.telemetry`).
 
-- The contract is the only declaration of the noun. The mod's own hooks
+- The contract is the mod's only declaration of the noun; an engine that has
+  the noun too declares its own in `claude-code.d.ts`. The mod's own hooks
   import its types from the folder (`import type { Telemetry } from
   '../types'`), and the value its `engine.create` hook returns is checked
   against `EngineInterface['telemetry']`, so the implementation cannot drift
@@ -103,13 +126,13 @@ for the noun, and declares the noun on `EngineInterface` in `claude-code`
   plugin whose `engine.create` hook adds the noun, and answers the calls the
   way it answers the engine's: `on('telemetry.log', ($, e) => ({ value:
   undefined }))` runs above the provider's own method, its `e` typed by the
-  contract. With no provider loaded the `$` build refuses the hook, naming the
+  engine's event where `claude-code.d.ts` declares one, as it does here, else
+  by the contract. With no provider loaded the `$` build refuses the hook, naming the
   noun nobody provides.
 
-A plugin outside this repository that depends on a mod's noun points its
-tsconfig `include` at that mod's `types/` folder for now; once the engine
-writes the contracts of the plugins a session has installed, `/plugin-types`
-will put them beside `claude-code.d.ts` and the include goes away.
+A plugin outside this repository that depends on a mod's noun lists that mod
+under `dependencies` in its `plugin.json`: the engine lays the mod's contract
+beside `claude-code/` in the plugin's `.claude-plugin/types`.
 
 Early access: hooks modules load only where function hooks are enabled, and
 the API these mods are written against may change between releases without

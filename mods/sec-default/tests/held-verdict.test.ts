@@ -6,7 +6,7 @@ import Fixtures from './fixtures'
 tier('prepend')
 
 describe('held-verdict', () => {
-  test('over an allow: any deny, and an ask a rule or a hook decided', () => {
+  test('over an allow: any deny and any ask', () => {
     expect(
       [
         Fixtures.RULE_DENY,
@@ -16,16 +16,16 @@ describe('held-verdict', () => {
         Fixtures.PLAIN_DENY,
         Fixtures.ASKED,
         Fixtures.ALLOWED,
-      ].map(held => Hooks.holdsOver(held, Fixtures.ALLOWED)),
-    ).toEqual([true, true, true, true, true, false, false])
+      ].map(held => Hooks.holdsOver(held, Fixtures.ALLOWED, undefined)),
+    ).toEqual([true, true, true, true, true, true, false])
   })
 
   test("a setting's ask and a host's hold over an allow and a rewording", () => {
     expect(
       [Fixtures.SETTING_ASK, Fixtures.HOST_ASK].map(held => [
-        Hooks.holdsOver(held, Fixtures.ALLOWED),
-        Hooks.holdsOver(held, Fixtures.ASKED),
-        Hooks.holdsOver(held, { ...held }),
+        Hooks.holdsOver(held, Fixtures.ALLOWED, 'host'),
+        Hooks.holdsOver(held, Fixtures.ASKED, 'host'),
+        Hooks.holdsOver(held, { ...held }, 'host'),
       ]),
     ).toEqual([
       [true, true, false],
@@ -33,17 +33,21 @@ describe('held-verdict', () => {
     ])
   })
 
-  test('a setting or decider the answer itself names holds nothing', () => {
+  test("the mode's ask holds whoever answers; their ask, under a host", () => {
     expect(
-      Hooks.holdsOver(Fixtures.ASKED, {
-        ...Fixtures.ALLOWED,
-        setting: 'permissions.blockReadsOutsideWorkingDirectories',
-        decider: 'host',
-      }),
-    ).toBe(false)
+      ['person', undefined, 'host'].map(approver =>
+        [Fixtures.ALLOWED, Fixtures.HOST_ASK, Fixtures.PLAIN_DENY].map(answer =>
+          Hooks.holdsOver(Fixtures.ASKED, answer, approver),
+        ),
+      ),
+    ).toEqual([
+      [true, false, false],
+      [true, false, false],
+      [true, true, false],
+    ])
   })
 
-  test('an ask is named for its hook, then its setting, then its host', () => {
+  test('an ask is named for its hook, then its setting, else as a prompt', () => {
     expect(
       [
         { ...Fixtures.HOST_ASK, ...Fixtures.SETTING_ASK, ...Fixtures.HOOK_ASK },
@@ -56,7 +60,7 @@ describe('held-verdict', () => {
         "a permissions.blockReadsOutsideWorkingDirectories setting's ask " +
           'from a Bash call; the ' +
           "permissions.blockReadsOutsideWorkingDirectories setting's ask",
-        "a host's ask from a Bash call; the host's ask",
+        'a permission prompt from a Bash call; the permission prompt',
       ].map(
         middle =>
           `easy tried to lift ${middle} holds over the plugins you install ` +
@@ -73,9 +77,9 @@ describe('held-verdict', () => {
         Fixtures.HOOK_DENY,
         Fixtures.HOOK_ASK,
       ].map(held => [
-        Hooks.holdsOver(held, Fixtures.ASKED),
-        Hooks.holdsOver(held, Fixtures.PLAIN_DENY),
-        Hooks.holdsOver(held, { ...held }),
+        Hooks.holdsOver(held, Fixtures.ASKED, undefined),
+        Hooks.holdsOver(held, Fixtures.PLAIN_DENY, undefined),
+        Hooks.holdsOver(held, { ...held }, undefined),
       ]),
     ).toEqual([
       [true, true, false],
@@ -87,20 +91,29 @@ describe('held-verdict', () => {
 
   test('an ask stripped of its rule, same sentence, is no same verdict', () => {
     expect(
-      Hooks.holdsOver(Fixtures.RULE_ASK, {
-        decision: Fixtures.RULE_ASK.decision,
-        reason: Fixtures.RULE_ASK.reason,
-      }),
+      Hooks.holdsOver(
+        Fixtures.RULE_ASK,
+        {
+          decision: Fixtures.RULE_ASK.decision,
+          reason: Fixtures.RULE_ASK.reason,
+        },
+        undefined,
+      ),
     ).toBe(true)
   })
 
-  test('a rule or hook the answer itself names makes nothing hold', () => {
+  test('what the answer itself names makes nothing hold', () => {
     expect(
-      Hooks.holdsOver(Fixtures.ASKED, {
-        ...Fixtures.ALLOWED,
-        rule: 'Bash(echo *)',
-        hook: 'PreToolUse',
-      }),
+      Hooks.holdsOver(
+        Fixtures.ASKED,
+        {
+          decision: 'ask',
+          rule: 'Bash(echo *)',
+          hook: 'PreToolUse',
+          setting: 'permissions.blockReadsOutsideWorkingDirectories',
+        },
+        undefined,
+      ),
     ).toBe(false)
   })
 
